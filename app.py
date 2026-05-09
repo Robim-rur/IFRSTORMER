@@ -1,7 +1,6 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import pandas_ta as ta
 import numpy as np
 
 # =========================================================
@@ -14,7 +13,29 @@ st.set_page_config(
 )
 
 # =========================================================
-# FUNÇÃO BACKTEST
+# FUNÇÕES INDICADORES
+# =========================================================
+
+def calcular_rsi(series, period=2):
+
+    delta = series.diff()
+
+    gain = delta.clip(lower=0)
+
+    loss = -delta.clip(upper=0)
+
+    avg_gain = gain.rolling(period).mean()
+
+    avg_loss = loss.rolling(period).mean()
+
+    rs = avg_gain / avg_loss
+
+    rsi = 100 - (100 / (1 + rs))
+
+    return rsi
+
+# =========================================================
+# BACKTEST
 # =========================================================
 
 def backtest_estrategia(ticker, periodo="10y"):
@@ -36,15 +57,28 @@ def backtest_estrategia(ticker, periodo="10y"):
         # INDICADORES
         # =================================================
 
-        df["IFR2"] = ta.rsi(df["Close"], length=2)
-        df["EMA17"] = ta.ema(df["Close"], length=17)
-        df["EMA20"] = ta.ema(df["Close"], length=20)
-        df["VOL_MA20"] = df["Volume"].rolling(20).mean()
+        df["IFR2"] = calcular_rsi(df["Close"], 2)
+
+        df["EMA17"] = df["Close"].ewm(
+            span=17,
+            adjust=False
+        ).mean()
+
+        df["EMA20"] = df["Close"].ewm(
+            span=20,
+            adjust=False
+        ).mean()
+
+        df["VOL_MA20"] = (
+            df["Volume"]
+            .rolling(20)
+            .mean()
+        )
 
         df.dropna(inplace=True)
 
         # =================================================
-        # FILTROS
+        # SINAL
         # =================================================
 
         df["Signal"] = (
@@ -63,10 +97,6 @@ def backtest_estrategia(ticker, periodo="10y"):
         target_price = 0
 
         entry_date = None
-
-        # =================================================
-        # LOOP
-        # =================================================
 
         for i in range(1, len(df)-1):
 
@@ -102,41 +132,53 @@ def backtest_estrategia(ticker, periodo="10y"):
 
             if in_position:
 
-                low_atual = float(df["Low"].iloc[i])
-                high_atual = float(df["High"].iloc[i])
+                low_now = float(df["Low"].iloc[i])
 
-                # STOP PRIMEIRO
-                if low_atual <= stop_price:
+                high_now = float(df["High"].iloc[i])
+
+                # STOP
+                if low_now <= stop_price:
 
                     trades.append({
                         "Resultado": 0,
                         "Gain (%)": -risk,
-                        "Dias": (df.index[i] - entry_date).days
+                        "Dias": (
+                            df.index[i] - entry_date
+                        ).days
                     })
 
                     in_position = False
 
                 # GAIN
-                elif high_atual >= target_price:
+                elif high_now >= target_price:
 
                     trades.append({
                         "Resultado": 1,
                         "Gain (%)": 2.5,
-                        "Dias": (df.index[i] - entry_date).days
+                        "Dias": (
+                            df.index[i] - entry_date
+                        ).days
                     })
 
                     in_position = False
 
-                # EVITA OPERAÇÕES ETERNAS
-                elif (df.index[i] - entry_date).days > 20:
+                # SAÍDA FORÇADA
+                elif (
+                    df.index[i] - entry_date
+                ).days > 20:
 
                     resultado = (
-                        (float(df["Close"].iloc[i]) - entry_price)
+                        (
+                            float(df["Close"].iloc[i])
+                            - entry_price
+                        )
                         / entry_price
                     ) * 100
 
                     trades.append({
-                        "Resultado": 1 if resultado > 0 else 0,
+                        "Resultado": (
+                            1 if resultado > 0 else 0
+                        ),
                         "Gain (%)": resultado,
                         "Dias": 20
                     })
@@ -154,19 +196,29 @@ def backtest_estrategia(ticker, periodo="10y"):
 
         total = len(trades_df)
 
-        wins = len(trades_df[trades_df["Resultado"] == 1])
+        wins = len(
+            trades_df[
+                trades_df["Resultado"] == 1
+            ]
+        )
 
         losses = total - wins
 
         winrate = (wins / total) * 100
 
-        media_gain = trades_df["Gain (%)"].mean()
+        media_gain = (
+            trades_df["Gain (%)"].mean()
+        )
 
         payoff = (
-            trades_df[trades_df["Gain (%)"] > 0]["Gain (%)"].mean()
+            trades_df[
+                trades_df["Gain (%)"] > 0
+            ]["Gain (%)"].mean()
             /
             abs(
-                trades_df[trades_df["Gain (%)"] < 0]["Gain (%)"].mean()
+                trades_df[
+                    trades_df["Gain (%)"] < 0
+                ]["Gain (%)"].mean()
             )
             if losses > 0 else 0
         )
@@ -177,9 +229,10 @@ def backtest_estrategia(ticker, periodo="10y"):
             (1 - (winrate / 100))
         )
 
-        tempo_medio = trades_df["Dias"].mean()
+        tempo_medio = (
+            trades_df["Dias"].mean()
+        )
 
-        # SCORE MAIS PROFISSIONAL
         score = (
             (winrate * 0.5)
             +
@@ -190,11 +243,9 @@ def backtest_estrategia(ticker, periodo="10y"):
             (min(total, 100) * 0.3)
         )
 
-        # =============================================
-        # SINAL ATUAL
-        # =============================================
-
-        sinal_agora = bool(df["Signal"].iloc[-1])
+        sinal_agora = bool(
+            df["Signal"].iloc[-1]
+        )
 
         return {
 
@@ -202,29 +253,57 @@ def backtest_estrategia(ticker, periodo="10y"):
 
             "Trades": total,
 
-            "Win Rate (%)": round(winrate, 2),
+            "Win Rate (%)": round(
+                winrate,
+                2
+            ),
 
-            "Payoff": round(payoff, 2),
+            "Payoff": round(
+                payoff,
+                2
+            ),
 
-            "Expectativa": round(expectativa, 2),
+            "Expectativa": round(
+                expectativa,
+                2
+            ),
 
-            "Média Gain (%)": round(media_gain, 2),
+            "Média Gain (%)": round(
+                media_gain,
+                2
+            ),
 
-            "Tempo Médio": round(tempo_medio, 1),
+            "Tempo Médio": round(
+                tempo_medio,
+                1
+            ),
 
-            "Score": round(score, 2),
+            "Score": round(
+                score,
+                2
+            ),
 
-            "Sinal Hoje": "SIM" if sinal_agora else "NÃO"
+            "Sinal Hoje": (
+                "SIM"
+                if sinal_agora
+                else "NÃO"
+            )
         }
 
-    except Exception:
-        return None
+    except Exception as e:
+
+        return {
+            "Ticker": ticker,
+            "Erro": str(e)
+        }
 
 # =========================================================
 # INTERFACE
 # =========================================================
 
-st.title("📊 Terminal Quant IFR2 + EMA17/20")
+st.title(
+    "📊 Terminal Quant IFR2 + EMA17/20"
+)
 
 st.markdown("""
 
@@ -241,7 +320,7 @@ st.markdown("""
 """)
 
 # =========================================================
-# LISTA MELHORADA
+# TICKERS
 # =========================================================
 
 tickers_default = """
@@ -281,20 +360,23 @@ tickers_input = st.text_area(
 )
 
 periodo = st.selectbox(
-    "Período do Backtest",
+    "Período",
     ["2y", "5y", "10y"],
     index=2
 )
 
 # =========================================================
-# BOTÃO
+# EXECUTAR
 # =========================================================
 
 if st.button("🚀 Executar Backtest"):
 
     lista_tickers = [
+
         t.strip().upper()
+
         for t in tickers_input.split(",")
+
         if t.strip()
     ]
 
@@ -306,7 +388,9 @@ if st.button("🚀 Executar Backtest"):
 
     for idx, ticker in enumerate(lista_tickers):
 
-        status.text(f"Analisando {ticker}...")
+        status.text(
+            f"Analisando {ticker}..."
+        )
 
         resultado = backtest_estrategia(
             ticker,
@@ -314,10 +398,12 @@ if st.button("🚀 Executar Backtest"):
         )
 
         if resultado:
+
             resultados.append(resultado)
 
         progress.progress(
-            (idx + 1) / len(lista_tickers)
+            (idx + 1)
+            / len(lista_tickers)
         )
 
     status.text("Concluído.")
@@ -328,73 +414,52 @@ if st.button("🚀 Executar Backtest"):
 
     if resultados:
 
-        df_resultados = pd.DataFrame(resultados)
-
-        df_resultados = df_resultados.sort_values(
-            by="Score",
-            ascending=False
+        df_resultados = pd.DataFrame(
+            resultados
         )
+
+        if "Score" in df_resultados.columns:
+
+            df_resultados = (
+                df_resultados
+                .sort_values(
+                    by="Score",
+                    ascending=False
+                )
+            )
 
         tab1, tab2, tab3 = st.tabs([
             "🏆 Ranking",
-            "📈 Sinais Atuais",
-            "📋 Todos Resultados"
+            "📈 Sinais",
+            "📋 Geral"
         ])
 
-        # =================================================
-        # RANKING
-        # =================================================
-
         with tab1:
-
-            st.subheader("Melhores Ativos")
 
             st.dataframe(
                 df_resultados,
                 use_container_width=True
             )
 
-        # =================================================
-        # SINAIS
-        # =================================================
-
         with tab2:
 
-            sinais = df_resultados[
-                df_resultados["Sinal Hoje"] == "SIM"
-            ]
+            if "Sinal Hoje" in df_resultados.columns:
 
-            if len(sinais) > 0:
-
-                st.success(
-                    f"{len(sinais)} ativos em sinal hoje."
-                )
+                sinais = df_resultados[
+                    df_resultados[
+                        "Sinal Hoje"
+                    ] == "SIM"
+                ]
 
                 st.dataframe(
-                    sinais.sort_values(
-                        by="Score",
-                        ascending=False
-                    ),
+                    sinais,
                     use_container_width=True
                 )
-
-            else:
-
-                st.warning(
-                    "Nenhum ativo em sinal hoje."
-                )
-
-        # =================================================
-        # GERAL
-        # =================================================
 
         with tab3:
 
             st.dataframe(
-                df_resultados.sort_values(
-                    by="Win Rate (%)",
-                    ascending=False
-                ),
+                df_resultados,
                 use_container_width=True
             )
 
