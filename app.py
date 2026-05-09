@@ -3,18 +3,18 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 
-# =========================================================
-# CONFIGURAÇÃO
-# =========================================================
+# =====================================================
+# CONFIG
+# =====================================================
 
 st.set_page_config(
     page_title="Scanner IFR2",
     layout="wide"
 )
 
-# =========================================================
+# =====================================================
 # TÍTULO
-# =========================================================
+# =====================================================
 
 st.title("📊 Scanner IFR2 + EMA17/20")
 
@@ -25,26 +25,26 @@ st.markdown("""
 - IFR2 abaixo de 25
 - EMA17 acima da EMA20
 - Entrada na abertura do candle seguinte
-- Stop na mínima do candle do sinal
-- Gain de 2,5%
+- Stop na mínima do candle sinal
+- Gain fixo de 2,5%
 
 """)
 
-# =========================================================
-# FUNÇÃO RSI
-# =========================================================
+# =====================================================
+# RSI
+# =====================================================
 
 def calcular_rsi(close, period=2):
 
     delta = close.diff()
 
-    gain = delta.clip(lower=0)
+    gain = delta.where(delta > 0, 0)
 
-    loss = -delta.clip(upper=0)
+    loss = -delta.where(delta < 0, 0)
 
-    avg_gain = gain.rolling(window=period).mean()
+    avg_gain = gain.rolling(period).mean()
 
-    avg_loss = loss.rolling(window=period).mean()
+    avg_loss = loss.rolling(period).mean()
 
     rs = avg_gain / avg_loss
 
@@ -52,55 +52,43 @@ def calcular_rsi(close, period=2):
 
     return rsi
 
-# =========================================================
+# =====================================================
 # BACKTEST
-# =========================================================
+# =====================================================
 
 def backtest(ticker, periodo):
 
     try:
 
-        # =================================================
-        # DOWNLOAD
-        # =================================================
-
         df = yf.download(
             ticker,
             period=periodo,
             interval="1d",
-            auto_adjust=True,
             progress=False,
+            auto_adjust=True,
             threads=False
         )
 
-        # =================================================
-        # VALIDAÇÕES
-        # =================================================
-
-        if df is None:
+        if df.empty:
             return None
 
-        if len(df) == 0:
-            return None
-
-        # =================================================
+        # =============================================
         # REMOVE MULTIINDEX
-        # =================================================
+        # =============================================
 
         if isinstance(df.columns, pd.MultiIndex):
 
             df.columns = df.columns.get_level_values(0)
 
-        # =================================================
-        # GARANTE COLUNAS
-        # =================================================
+        # =============================================
+        # GARANTE DADOS
+        # =============================================
 
         colunas = [
             "Open",
             "High",
             "Low",
-            "Close",
-            "Volume"
+            "Close"
         ]
 
         for coluna in colunas:
@@ -108,29 +96,16 @@ def backtest(ticker, periodo):
             if coluna not in df.columns:
                 return None
 
-        # =================================================
-        # CONVERTE PARA NUMÉRICO
-        # =================================================
+        df = df[colunas].copy()
 
-        for coluna in colunas:
+        df.dropna(inplace=True)
 
-            df[coluna] = pd.to_numeric(
-                df[coluna],
-                errors="coerce"
-            )
-
-        # =================================================
-        # REMOVE NAN
-        # =================================================
-
-        df = df.dropna()
-
-        if len(df) < 50:
+        if len(df) < 30:
             return None
 
-        # =================================================
+        # =============================================
         # INDICADORES
-        # =================================================
+        # =============================================
 
         df["IFR2"] = calcular_rsi(
             df["Close"],
@@ -155,15 +130,11 @@ def backtest(ticker, periodo):
             .mean()
         )
 
-        # =================================================
-        # REMOVE NAN
-        # =================================================
+        df.dropna(inplace=True)
 
-        df = df.dropna()
-
-        # =================================================
+        # =============================================
         # SINAL
-        # =================================================
+        # =============================================
 
         df["SINAL"] = (
             (df["IFR2"] < 25)
@@ -171,11 +142,11 @@ def backtest(ticker, periodo):
             (df["EMA17"] > df["EMA20"])
         )
 
-        # =================================================
+        # =============================================
         # VARIÁVEIS
-        # =================================================
+        # =============================================
 
-        trades = []
+        resultados = []
 
         em_operacao = False
 
@@ -184,15 +155,15 @@ def backtest(ticker, periodo):
         alvo = 0
         risco = 0
 
-        # =================================================
+        # =============================================
         # LOOP
-        # =================================================
+        # =============================================
 
         for i in range(1, len(df)):
 
-            # =============================================
+            # =========================================
             # ENTRADA
-            # =============================================
+            # =========================================
 
             if (
                 em_operacao is False
@@ -223,9 +194,9 @@ def backtest(ticker, periodo):
 
                 continue
 
-            # =============================================
+            # =========================================
             # SAÍDA
-            # =============================================
+            # =========================================
 
             if em_operacao:
 
@@ -241,7 +212,7 @@ def backtest(ticker, periodo):
 
                 if minima <= stop:
 
-                    trades.append(-risco)
+                    resultados.append(-risco)
 
                     em_operacao = False
 
@@ -249,32 +220,32 @@ def backtest(ticker, periodo):
 
                 elif maxima >= alvo:
 
-                    trades.append(2.5)
+                    resultados.append(2.5)
 
                     em_operacao = False
 
-        # =================================================
-        # RESULTADOS
-        # =================================================
+        # =============================================
+        # ESTATÍSTICAS
+        # =============================================
 
-        if len(trades) < 5:
+        if len(resultados) < 5:
             return None
 
-        total = len(trades)
+        total = len(resultados)
 
         ganhos = len([
-            x for x in trades
+            x for x in resultados
             if x > 0
         ])
 
-        taxa_acerto = (
+        taxa = (
             ganhos / total
         ) * 100
 
-        media = np.mean(trades)
+        media = np.mean(resultados)
 
         score = (
-            (taxa_acerto * 0.7)
+            (taxa * 0.7)
             +
             (media * 10)
             +
@@ -292,7 +263,7 @@ def backtest(ticker, periodo):
             "Trades": total,
 
             "Acerto (%)": round(
-                taxa_acerto,
+                taxa,
                 2
             ),
 
@@ -313,18 +284,13 @@ def backtest(ticker, periodo):
             )
         }
 
-    except Exception as erro:
+    except:
 
-        return {
+        return None
 
-            "Ticker": ticker,
-
-            "Erro": str(erro)
-        }
-
-# =========================================================
+# =====================================================
 # TICKERS
-# =========================================================
+# =====================================================
 
 tickers_padrao = """
 
@@ -349,15 +315,15 @@ NASD11.SA
 
 """
 
-entrada_tickers = st.text_area(
+entrada = st.text_area(
     "Lista de Tickers",
     tickers_padrao,
     height=250
 )
 
-# =========================================================
+# =====================================================
 # PERÍODO
-# =========================================================
+# =====================================================
 
 periodo = st.selectbox(
     "Período",
@@ -365,9 +331,9 @@ periodo = st.selectbox(
     index=1
 )
 
-# =========================================================
-# EXECUTAR
-# =========================================================
+# =====================================================
+# BOTÃO
+# =====================================================
 
 if st.button("🚀 Executar Scanner"):
 
@@ -375,90 +341,74 @@ if st.button("🚀 Executar Scanner"):
 
         x.strip().upper()
 
-        for x in entrada_tickers.split(",")
+        for x in entrada.split(",")
 
         if x.strip()
     ]
 
-    resultados = []
+    resultados_finais = []
 
     barra = st.progress(0)
 
-    status = st.empty()
-
     total = len(lista)
 
-    for indice, ticker in enumerate(lista):
-
-        status.text(
-            f"Analisando {ticker}..."
-        )
+    for i, ticker in enumerate(lista):
 
         resultado = backtest(
             ticker,
             periodo
         )
 
-        if resultado is not None:
+        if resultado:
 
-            resultados.append(resultado)
-
-        barra.progress(
-            (indice + 1) / total
-        )
-
-    status.text("Concluído.")
-
-    # =====================================================
-    # RESULTADOS
-    # =====================================================
-
-    if len(resultados) > 0:
-
-        df_resultados = pd.DataFrame(
-            resultados
-        )
-
-        if "Score" in df_resultados.columns:
-
-            df_resultados = (
-                df_resultados
-                .sort_values(
-                    by="Score",
-                    ascending=False
-                )
+            resultados_finais.append(
+                resultado
             )
 
-        # =================================================
-        # ABAS
-        # =================================================
+        barra.progress(
+            (i + 1) / total
+        )
 
-        aba1, aba2 = st.tabs([
+    # =============================================
+    # RESULTADOS
+    # =============================================
+
+    if len(resultados_finais) > 0:
+
+        df_final = pd.DataFrame(
+            resultados_finais
+        )
+
+        df_final = df_final.sort_values(
+            by="Score",
+            ascending=False
+        )
+
+        tab1, tab2 = st.tabs([
             "🏆 Ranking",
             "📈 Sinais Hoje"
         ])
 
-        # =================================================
+        # =========================================
         # RANKING
-        # =================================================
+        # =========================================
 
-        with aba1:
+        with tab1:
 
             st.dataframe(
-                df_resultados,
+                df_final,
                 use_container_width=True
             )
 
-        # =================================================
+        # =========================================
         # SINAIS
-        # =================================================
+        # =========================================
 
-        with aba2:
+        with tab2:
 
-            sinais = df_resultados[
-                df_resultados[
-                    "Sinal Hoje"
-                ] == "SIM"
+            sinais = df_final[
+                df_final["Sinal Hoje"]
+                == "SIM"
             ]
 
             if len(sinais) > 0:
@@ -471,7 +421,7 @@ if st.button("🚀 Executar Scanner"):
             else:
 
                 st.warning(
-                    "Nenhum sinal encontrado hoje."
+                    "Nenhum sinal hoje."
                 )
 
     else:
