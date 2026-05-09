@@ -3,18 +3,18 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 
-# =====================================================
-# CONFIG
-# =====================================================
+# =========================================================
+# CONFIGURAÇÃO
+# =========================================================
 
 st.set_page_config(
-    page_title="Scanner IFR2",
+    page_title="Scanner IFR2 Profissional",
     layout="wide"
 )
 
-# =====================================================
+# =========================================================
 # TÍTULO
-# =====================================================
+# =========================================================
 
 st.title("📊 Scanner IFR2 + EMA17/20")
 
@@ -25,22 +25,88 @@ st.markdown("""
 - IFR2 abaixo de 25
 - EMA17 acima da EMA20
 - Entrada na abertura do candle seguinte
-- Stop na mínima do candle sinal
+- Stop na mínima do candle do sinal
 - Gain fixo de 2,5%
+- Operações somente compradas
 
 """)
 
-# =====================================================
+# =========================================================
+# LISTA DE ATIVOS
+# =========================================================
+
+TICKERS = [
+
+    # Bancos
+    "BBAS3.SA","ITUB4.SA","ITSA4.SA","BBDC4.SA","BBDC3.SA","SANB11.SA",
+    "BPAC11.SA","BRSR6.SA","BMGB4.SA","PSSA3.SA","IRBR3.SA",
+
+    # Energia / Petróleo
+    "PETR4.SA","PETR3.SA","PRIO3.SA","RECV3.SA","RRRP3.SA",
+    "UGPA3.SA","VBBR3.SA",
+
+    # Mineração
+    "VALE3.SA","CSNA3.SA","USIM5.SA","GGBR4.SA","GOAU4.SA","BRAP4.SA",
+
+    # Papel e Celulose
+    "SUZB3.SA","KLBN11.SA","KLBN4.SA","KLBN3.SA",
+
+    # Energia elétrica
+    "CMIG4.SA","TAEE11.SA","CPFE3.SA","EQTL3.SA","ELET3.SA","ELET6.SA",
+    "ALUP11.SA","TRPL4.SA","NEOE3.SA","ENGI11.SA",
+
+    # Saneamento
+    "SBSP3.SA","SAPR11.SA","CSMG3.SA",
+
+    # Consumo
+    "MGLU3.SA","LREN3.SA","ASAI3.SA","PCAR3.SA","CRFB3.SA",
+    "ARZZ3.SA","SOMA3.SA",
+
+    # Saúde
+    "HAPV3.SA","QUAL3.SA","FLRY3.SA","RDOR3.SA",
+
+    # Construção
+    "MRVE3.SA","EZTC3.SA","CYRE3.SA","DIRR3.SA","TEND3.SA",
+
+    # Tecnologia
+    "TOTS3.SA","POSI3.SA","LWSA3.SA",
+
+    # Transporte
+    "RAIL3.SA","CCRO3.SA","ECOR3.SA","AZUL4.SA","GOLL4.SA",
+
+    # Industriais
+    "WEGE3.SA","ROMI3.SA","KEPL3.SA","RAPT4.SA",
+
+    # Alimentos
+    "JBSS3.SA","BRFS3.SA","MRFG3.SA","BEEF3.SA",
+
+    # ETFs
+    "BOVA11.SA","SMAL11.SA","IVVB11.SA","DIVO11.SA",
+
+    # FIIs
+    "KNRI11.SA","HGLG11.SA","MXRF11.SA","XPML11.SA",
+    "VISC11.SA","XPLG11.SA","HGRE11.SA","BRCO11.SA",
+
+    # BDRs
+    "AAPL34.SA","MSFT34.SA","GOGL34.SA","AMZO34.SA",
+    "META34.SA","TSLA34.SA","NVDC34.SA",
+    "JPMC34.SA","BOAC34.SA","WFCB34.SA",
+    "WALM34.SA","COST34.SA","PEPB34.SA","KOCA34.SA",
+    "JNJB34.SA","PFEF34.SA","MRCK34.SA",
+    "DISB34.SA","NKEE34.SA","SBUX34.SA"
+]
+
+# =========================================================
 # RSI
-# =====================================================
+# =========================================================
 
 def calcular_rsi(close, period=2):
 
     delta = close.diff()
 
-    gain = delta.where(delta > 0, 0)
+    gain = delta.clip(lower=0)
 
-    loss = -delta.where(delta < 0, 0)
+    loss = -delta.clip(upper=0)
 
     avg_gain = gain.rolling(period).mean()
 
@@ -52,9 +118,9 @@ def calcular_rsi(close, period=2):
 
     return rsi
 
-# =====================================================
+# =========================================================
 # BACKTEST
-# =====================================================
+# =========================================================
 
 def backtest(ticker, periodo):
 
@@ -64,31 +130,28 @@ def backtest(ticker, periodo):
             ticker,
             period=periodo,
             interval="1d",
-            progress=False,
             auto_adjust=True,
+            progress=False,
             threads=False
         )
 
+        # =================================================
+        # VALIDAÇÕES
+        # =================================================
+
         if df.empty:
             return None
-
-        # =============================================
-        # REMOVE MULTIINDEX
-        # =============================================
 
         if isinstance(df.columns, pd.MultiIndex):
 
             df.columns = df.columns.get_level_values(0)
 
-        # =============================================
-        # GARANTE DADOS
-        # =============================================
-
         colunas = [
             "Open",
             "High",
             "Low",
-            "Close"
+            "Close",
+            "Volume"
         ]
 
         for coluna in colunas:
@@ -100,12 +163,12 @@ def backtest(ticker, periodo):
 
         df.dropna(inplace=True)
 
-        if len(df) < 30:
+        if len(df) < 50:
             return None
 
-        # =============================================
+        # =================================================
         # INDICADORES
-        # =============================================
+        # =================================================
 
         df["IFR2"] = calcular_rsi(
             df["Close"],
@@ -130,23 +193,37 @@ def backtest(ticker, periodo):
             .mean()
         )
 
-        df.dropna(inplace=True)
-
-        # =============================================
-        # SINAL
-        # =============================================
-
-        df["SINAL"] = (
-            (df["IFR2"] < 25)
-            &
-            (df["EMA17"] > df["EMA20"])
+        df["VOL20"] = (
+            df["Volume"]
+            .rolling(20)
+            .mean()
         )
 
-        # =============================================
-        # VARIÁVEIS
-        # =============================================
+        df.dropna(inplace=True)
 
-        resultados = []
+        # =================================================
+        # SINAL
+        # =================================================
+
+        df["SINAL"] = (
+
+            (df["IFR2"] < 25)
+
+            &
+
+            (df["EMA17"] > df["EMA20"])
+
+            &
+
+            (df["Volume"] > df["VOL20"])
+
+        )
+
+        # =================================================
+        # VARIÁVEIS
+        # =================================================
+
+        trades = []
 
         em_operacao = False
 
@@ -155,15 +232,15 @@ def backtest(ticker, periodo):
         alvo = 0
         risco = 0
 
-        # =============================================
+        # =================================================
         # LOOP
-        # =============================================
+        # =================================================
 
         for i in range(1, len(df)):
 
-            # =========================================
+            # =============================================
             # ENTRADA
-            # =========================================
+            # =============================================
 
             if (
                 em_operacao is False
@@ -194,9 +271,9 @@ def backtest(ticker, periodo):
 
                 continue
 
-            # =========================================
+            # =============================================
             # SAÍDA
-            # =========================================
+            # =============================================
 
             if em_operacao:
 
@@ -212,7 +289,7 @@ def backtest(ticker, periodo):
 
                 if minima <= stop:
 
-                    resultados.append(-risco)
+                    trades.append(-risco)
 
                     em_operacao = False
 
@@ -220,36 +297,66 @@ def backtest(ticker, periodo):
 
                 elif maxima >= alvo:
 
-                    resultados.append(2.5)
+                    trades.append(2.5)
 
                     em_operacao = False
 
-        # =============================================
-        # ESTATÍSTICAS
-        # =============================================
+        # =================================================
+        # RESULTADOS
+        # =================================================
 
-        if len(resultados) < 5:
+        if len(trades) < 5:
             return None
 
-        total = len(resultados)
+        total = len(trades)
 
         ganhos = len([
-            x for x in resultados
+            x for x in trades
             if x > 0
         ])
 
-        taxa = (
+        taxa_acerto = (
             ganhos / total
         ) * 100
 
-        media = np.mean(resultados)
+        media = np.mean(trades)
+
+        payoff = 0
+
+        ganhos_lista = [
+            x for x in trades
+            if x > 0
+        ]
+
+        perdas_lista = [
+            x for x in trades
+            if x < 0
+        ]
+
+        if len(perdas_lista) > 0:
+
+            payoff = (
+                np.mean(ganhos_lista)
+                /
+                abs(np.mean(perdas_lista))
+            )
 
         score = (
-            (taxa * 0.7)
+
+            (taxa_acerto * 0.5)
+
             +
-            (media * 10)
+
+            (media * 15)
+
             +
+
+            (payoff * 20)
+
+            +
+
             (total * 0.2)
+
         )
 
         sinal_hoje = bool(
@@ -263,12 +370,17 @@ def backtest(ticker, periodo):
             "Trades": total,
 
             "Acerto (%)": round(
-                taxa,
+                taxa_acerto,
                 2
             ),
 
             "Media (%)": round(
                 media,
+                2
+            ),
+
+            "Payoff": round(
+                payoff,
                 2
             ),
 
@@ -288,73 +400,35 @@ def backtest(ticker, periodo):
 
         return None
 
-# =====================================================
-# TICKERS
-# =====================================================
-
-tickers_padrao = """
-
-
-
-PRIO3.SA,
-RRRP3.SA,
-RECV3.SA,
-MGLU3.SA,
-PETZ3.SA,
-COGN3.SA,
-YDUQ3.SA,
-LREN3.SA,
-ALOS3.SA,
-SOMA3.SA,
-SMFT3.SA,
-EMBR3.SA,
-WEGE3.SA,
-PETR4.SA,
-VALE3.SA,
-BBAS3.SA,
-SMAL11.SA,
-NASD11.SA
-
-"""
-
-entrada = st.text_area(
-    "Lista de Tickers",
-    tickers_padrao,
-    height=250
-)
-
-# =====================================================
+# =========================================================
 # PERÍODO
-# =====================================================
+# =========================================================
 
 periodo = st.selectbox(
-    "Período",
+    "Período do Backtest",
     ["2y", "5y", "10y"],
     index=1
 )
 
-# =====================================================
+# =========================================================
 # BOTÃO
-# =====================================================
+# =========================================================
 
 if st.button("🚀 Executar Scanner"):
-
-    lista = [
-
-        x.strip().upper()
-
-        for x in entrada.split(",")
-
-        if x.strip()
-    ]
 
     resultados_finais = []
 
     barra = st.progress(0)
 
-    total = len(lista)
+    status = st.empty()
 
-    for i, ticker in enumerate(lista):
+    total = len(TICKERS)
+
+    for i, ticker in enumerate(TICKERS):
+
+        status.text(
+            f"Analisando {ticker}..."
+        )
 
         resultado = backtest(
             ticker,
@@ -371,9 +445,11 @@ if st.button("🚀 Executar Scanner"):
             (i + 1) / total
         )
 
-    # =============================================
+    status.text("Concluído.")
+
+    # =====================================================
     # RESULTADOS
-    # =============================================
+    # =====================================================
 
     if len(resultados_finais) > 0:
 
@@ -386,25 +462,34 @@ if st.button("🚀 Executar Scanner"):
             ascending=False
         )
 
-        tab1, tab2 = st.tabs([
+        # =================================================
+        # ABAS
+        # =================================================
+
+        tab1, tab2, tab3 = st.tabs([
             "🏆 Ranking",
-            "📈 Sinais Hoje"
+            "📈 Sinais Hoje",
+            "📋 Resultados Gerais"
         ])
 
-        # =========================================
+        # =================================================
         # RANKING
-        # =========================================
+        # =================================================
 
         with tab1:
+
+            st.subheader(
+                "Melhores Ativos"
+            )
 
             st.dataframe(
                 df_final,
                 use_container_width=True
             )
 
-        # =========================================
+        # =================================================
         # SINAIS
-        # =========================================
+        # =================================================
 
         with tab2:
 
@@ -415,6 +500,10 @@ if st.button("🚀 Executar Scanner"):
 
             if len(sinais) > 0:
 
+                st.success(
+                    f"{len(sinais)} ativos em sinal hoje."
+                )
+
                 st.dataframe(
                     sinais,
                     use_container_width=True
@@ -423,8 +512,22 @@ if st.button("🚀 Executar Scanner"):
             else:
 
                 st.warning(
-                    "Nenhum sinal hoje."
+                    "Nenhum ativo em sinal hoje."
                 )
+
+        # =================================================
+        # GERAL
+        # =================================================
+
+        with tab3:
+
+            st.dataframe(
+                df_final.sort_values(
+                    by="Acerto (%)",
+                    ascending=False
+                ),
+                use_container_width=True
+            )
 
     else:
 
