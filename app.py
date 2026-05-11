@@ -26,7 +26,7 @@ st.markdown("""
 - EMA17 acima da EMA20
 - Entrada na abertura do candle seguinte
 - Stop na mínima do candle do sinal
-- Gain fixo de 2,5%
+- Gain fixo de 3%
 - Operações somente compradas
 
 """)
